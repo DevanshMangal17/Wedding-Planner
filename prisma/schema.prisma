@@ -1,0 +1,564 @@
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  weddingsOwned Wedding[]       @relation("WeddingOwner")
+  memberships   WeddingMember[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+}
+
+// ---------------------------------------------------------------------------
+// Wedding core
+// ---------------------------------------------------------------------------
+
+enum WeddingStage {
+  PLANNING
+  EXECUTION
+  WEDDING_DAY
+  POST_WEDDING
+  COMPLETED
+}
+
+model Wedding {
+  id                  String       @id @default(cuid())
+  slug                String       @unique
+  brideName           String
+  groomName           String
+  city                String
+  weddingDate         DateTime
+  guestCount          Int
+  budgetTotal         Int
+  budgetSpent         Int          @default(0)
+  stage               WeddingStage @default(PLANNING)
+  religion            String?
+  traditions          String? // JSON-encoded string[]
+  style               String?
+  colorTheme          String?
+  cuisinePrefs        String? // JSON-encoded string[]
+  photographyStyle    String?
+  decorStyle          String?
+  makeupPrefs         String?
+  entertainmentPrefs  String?
+  outstationGuestPct  Int?         @default(0)
+  needsAccommodation  Boolean      @default(false)
+  needsTransportation Boolean      @default(false)
+  multiCity           Boolean      @default(false)
+  notes               String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  owner   User   @relation("WeddingOwner", fields: [ownerId], references: [id])
+  ownerId String
+
+  members           WeddingMember[]
+  functions         WeddingFunction[]
+  tasks             WeddingTask[]
+  bookings          VendorBooking[]
+  payments          Payment[]
+  logisticsItems    LogisticsItem[]
+  guests            Guest[]
+  messages          Message[]
+  followUps         FollowUp[]
+  sosCases          SOSCase[]
+  aiRecommendations AIRecommendation[]
+  notifications     Notification[]
+  auditLogs         AuditLog[]
+
+  @@index([ownerId])
+}
+
+enum MemberRole {
+  BRIDE
+  GROOM
+  PARENT
+  FAMILY
+  PLANNER
+}
+
+model WeddingMember {
+  id        String     @id @default(cuid())
+  wedding   Wedding    @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId String
+  user      User?      @relation(fields: [userId], references: [id])
+  userId    String?
+  name      String
+  role      MemberRole
+  email     String?
+  phone     String?
+  createdAt DateTime   @default(now())
+
+  @@index([weddingId])
+}
+
+model WeddingFunction {
+  id         String   @id @default(cuid())
+  wedding    Wedding  @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId  String
+  name       String
+  date       DateTime
+  venueName  String?
+  guestCount Int?
+  notes      String?
+
+  tasks WeddingTask[]
+
+  @@index([weddingId])
+}
+
+// ---------------------------------------------------------------------------
+// Task / checklist engine
+// ---------------------------------------------------------------------------
+
+enum TaskStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  WAITING_VENDOR
+  COMPLETED
+  AT_RISK
+  DELAYED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskPhase {
+  SIX_MONTHS_BEFORE
+  THREE_MONTHS_BEFORE
+  ONE_MONTH_BEFORE
+  ONE_WEEK_BEFORE
+  WEDDING_DAY
+  POST_WEDDING
+}
+
+model WeddingTask {
+  id          String       @id @default(cuid())
+  wedding     Wedding      @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId   String
+  title       String
+  category    String
+  description String?
+  phase       TaskPhase
+  dueDate     DateTime
+  priority    TaskPriority @default(MEDIUM)
+  owner       String       @default("You")
+  status      TaskStatus   @default(NOT_STARTED)
+
+  function   WeddingFunction? @relation(fields: [functionId], references: [id])
+  functionId String?
+
+  relatedBooking   VendorBooking? @relation(fields: [relatedBookingId], references: [id])
+  relatedBookingId String?
+
+  relatedPayment   Payment? @relation(fields: [relatedPaymentId], references: [id])
+  relatedPaymentId String?
+
+  dependsOn  TaskDependency[] @relation("DependentTask")
+  dependedBy TaskDependency[] @relation("PrerequisiteTask")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([weddingId])
+  @@index([weddingId, status])
+}
+
+model TaskDependency {
+  id String @id @default(cuid())
+
+  task   WeddingTask @relation("DependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  taskId String
+
+  dependsOn   WeddingTask @relation("PrerequisiteTask", fields: [dependsOnId], references: [id], onDelete: Cascade)
+  dependsOnId String
+
+  @@unique([taskId, dependsOnId])
+}
+
+// ---------------------------------------------------------------------------
+// Vendor catalogue
+// ---------------------------------------------------------------------------
+
+enum VendorCategory {
+  VENUE
+  PHOTOGRAPHER
+  VIDEOGRAPHER
+  DECORATOR
+  CATERER
+  MAKEUP
+  MEHENDI
+  JEWELLERY
+  INVITATIONS
+  TRANSPORTATION
+  ACCOMMODATION
+  ENTERTAINMENT
+  PRIEST
+  FLORIST
+}
+
+model Vendor {
+  id               String         @id @default(cuid())
+  name             String
+  category         VendorCategory
+  city             String
+  priceMin         Int
+  priceMax         Int
+  rating           Float
+  reviewCount      Int
+  capacityMin      Int?
+  capacityMax      Int?
+  styleTags        String // JSON-encoded string[]
+  services         String // JSON-encoded {name, description, price}[]
+  reliabilityScore Int // 0-100
+  avgResponseHours Int
+  pastBookings     Int
+  description      String
+  imageEmoji       String         @default("✨")
+  contactName      String
+  contactPhone     String
+  contactEmail     String
+  isDemo           Boolean        @default(true)
+  /// Travels to any city nationwide rather than operating from a fixed home base.
+  isPanIndia       Boolean        @default(false)
+  createdAt        DateTime       @default(now())
+
+  availability VendorAvailability[]
+  bookings     VendorBooking[]
+  sosOptions   SOSOption[]
+
+  @@index([category])
+  @@index([city])
+}
+
+model VendorAvailability {
+  id          String   @id @default(cuid())
+  vendor      Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  vendorId    String
+  date        DateTime
+  isAvailable Boolean  @default(true)
+
+  @@unique([vendorId, date])
+  @@index([vendorId])
+}
+
+// ---------------------------------------------------------------------------
+// Procurement / booking workflow
+// ---------------------------------------------------------------------------
+
+enum BookingStatus {
+  REQUIREMENT_CONFIRMED
+  QUOTATION_REQUESTED
+  QUOTATION_RECEIVED
+  NEGOTIATION
+  FINAL_QUOTE
+  CONTRACT
+  ADVANCE_PAID
+  CONFIRMED
+  CANCELLED
+}
+
+model VendorBooking {
+  id             String         @id @default(cuid())
+  wedding        Wedding        @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId      String
+  vendor         Vendor         @relation(fields: [vendorId], references: [id])
+  vendorId       String
+  category       VendorCategory
+  status         BookingStatus  @default(REQUIREMENT_CONFIRMED)
+  quotedAmount   Int?
+  finalAmount    Int?
+  matchScore     Int?
+  matchBreakdown String? // JSON-encoded score breakdown
+  matchReason    String?
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  milestones VendorMilestone[]
+  payments   Payment[]
+  followUps  FollowUp[]
+  messages   Message[]
+  tasks      WeddingTask[]
+
+  @@index([weddingId])
+  @@index([vendorId])
+}
+
+enum MilestoneStatus {
+  PENDING
+  ON_TRACK
+  OVERDUE
+  RECEIVED
+  COMPLETED
+}
+
+model VendorMilestone {
+  id           String          @id @default(cuid())
+  booking      VendorBooking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId    String
+  title        String
+  expectedDate DateTime
+  actualDate   DateTime?
+  status       MilestoneStatus @default(PENDING)
+  amount       Int?
+
+  followUps FollowUp[]
+
+  @@index([bookingId])
+}
+
+// ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+enum PaymentStatus {
+  PENDING
+  DUE
+  PAID
+  OVERDUE
+}
+
+model Payment {
+  id             String         @id @default(cuid())
+  wedding        Wedding        @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId      String
+  booking        VendorBooking? @relation(fields: [bookingId], references: [id])
+  bookingId      String?
+  milestoneLabel String
+  amount         Int
+  dueDate        DateTime
+  paidDate       DateTime?
+  status         PaymentStatus  @default(PENDING)
+  createdAt      DateTime       @default(now())
+
+  tasks WeddingTask[]
+
+  @@index([weddingId])
+  @@index([bookingId])
+}
+
+// ---------------------------------------------------------------------------
+// Logistics
+// ---------------------------------------------------------------------------
+
+enum LogisticsType {
+  PEOPLE
+  MATERIAL
+}
+
+enum LogisticsStatus {
+  PLANNED
+  PICKED_UP
+  IN_TRANSIT
+  DELIVERED
+  DELAYED
+}
+
+model LogisticsItem {
+  id               String          @id @default(cuid())
+  wedding          Wedding         @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId        String
+  type             LogisticsType
+  label            String
+  originLabel      String
+  destinationLabel String
+  responsible      String
+  expectedDate     DateTime
+  status           LogisticsStatus @default(PLANNED)
+  notes            String?
+
+  guest   Guest?  @relation(fields: [guestId], references: [id])
+  guestId String?
+
+  @@index([weddingId])
+}
+
+enum GuestSide {
+  BRIDE
+  GROOM
+  BOTH
+}
+
+model Guest {
+  id                  String    @id @default(cuid())
+  wedding             Wedding   @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId           String
+  name                String
+  phone               String?
+  city                String?
+  side                GuestSide @default(BOTH)
+  isOutstation        Boolean   @default(false)
+  accommodationNeeded Boolean   @default(false)
+  transportNeeded     Boolean   @default(false)
+  rsvpStatus          String    @default("PENDING")
+
+  logisticsItems LogisticsItem[]
+
+  @@index([weddingId])
+}
+
+// ---------------------------------------------------------------------------
+// Communications
+// ---------------------------------------------------------------------------
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+model Message {
+  id          String           @id @default(cuid())
+  wedding     Wedding          @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId   String
+  booking     VendorBooking?   @relation(fields: [bookingId], references: [id])
+  bookingId   String?
+  direction   MessageDirection
+  channel     String           @default("SIMULATED")
+  body        String
+  aiGenerated Boolean          @default(false)
+  sentAt      DateTime         @default(now())
+
+  @@index([weddingId])
+  @@index([bookingId])
+}
+
+enum FollowUpStatus {
+  PENDING
+  SENT
+  ESCALATED
+  RESOLVED
+  IGNORED
+}
+
+model FollowUp {
+  id          String           @id @default(cuid())
+  wedding     Wedding          @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId   String
+  booking     VendorBooking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId   String
+  milestone   VendorMilestone? @relation(fields: [milestoneId], references: [id])
+  milestoneId String?
+  reason      String
+  status      FollowUpStatus   @default(PENDING)
+  dueDate     DateTime
+  createdAt   DateTime         @default(now())
+  resolvedAt  DateTime?
+
+  @@index([weddingId])
+  @@index([bookingId])
+}
+
+// ---------------------------------------------------------------------------
+// Wedding SOS
+// ---------------------------------------------------------------------------
+
+enum SOSStatus {
+  OPEN
+  OPTIONS_PROVIDED
+  RESOLVED
+  CANCELLED
+}
+
+model SOSCase {
+  id           String         @id @default(cuid())
+  wedding      Wedding        @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId    String
+  title        String
+  description  String
+  category     VendorCategory
+  neededByDate DateTime
+  status       SOSStatus      @default(OPEN)
+  createdAt    DateTime       @default(now())
+  resolvedAt   DateTime?
+
+  options SOSOption[]
+
+  @@index([weddingId])
+}
+
+model SOSOption {
+  id         String  @id @default(cuid())
+  sosCase    SOSCase @relation(fields: [sosCaseId], references: [id], onDelete: Cascade)
+  sosCaseId  String
+  vendor     Vendor  @relation(fields: [vendorId], references: [id])
+  vendorId   String
+  label      String // Premium / Best value / Closest match
+  price      Int
+  reason     String
+  isSelected Boolean @default(false)
+
+  @@index([sosCaseId])
+}
+
+// ---------------------------------------------------------------------------
+// AI + system
+// ---------------------------------------------------------------------------
+
+model AIRecommendation {
+  id        String   @id @default(cuid())
+  wedding   Wedding  @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId String
+  type      String
+  summary   String
+  payload   String // JSON-encoded
+  createdAt DateTime @default(now())
+
+  @@index([weddingId])
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+}
+
+model Notification {
+  id        String               @id @default(cuid())
+  wedding   Wedding              @relation(fields: [weddingId], references: [id], onDelete: Cascade)
+  weddingId String
+  user      User?                @relation(fields: [userId], references: [id])
+  userId    String?
+  title     String
+  body      String
+  severity  NotificationSeverity @default(INFO)
+  isRead    Boolean              @default(false)
+  createdAt DateTime             @default(now())
+
+  @@index([weddingId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  wedding    Wedding? @relation(fields: [weddingId], references: [id])
+  weddingId  String?
+  actor      User?    @relation(fields: [actorId], references: [id])
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  metadata   String? // JSON-encoded
+  createdAt  DateTime @default(now())
+
+  @@index([weddingId])
+}
