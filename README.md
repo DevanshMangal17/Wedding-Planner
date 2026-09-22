@@ -12,37 +12,32 @@ This is a working MVP built to demonstrate the full customer journey end-to-end 
 
 ```bash
 npm install
-npx prisma migrate dev   # applies the schema to your Postgres database
-npm run db:seed          # seeds vendors + 7 persona demo weddings
+npx prisma migrate dev   # creates prisma/dev.db (SQLite) and applies the schema
+npm run db:seed          # seeds vendors + 7 persona demo weddings (migrate dev also auto-runs this on a fresh DB)
 npm run dev              # http://localhost:3000
 ```
 
-You need a Postgres connection string first (see **Database** below) — this app originally ran on local SQLite for zero-setup development, but was migrated to Postgres to support deploying live on Vercel (SQLite's local-file approach doesn't survive serverless hosting). A free Neon or Vercel Postgres database works fine for local dev too.
+No external services or accounts are required to run the full app locally — see [AI provider](#5-ai-provider) below.
 
 ### Environment variables
 
-Copy `.env.example` to `.env` and fill in:
+Copy `.env.example` to `.env` (already done in this checkout) and adjust if needed:
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | Yes | Postgres connection string, e.g. from Neon or Vercel Postgres |
+| `DATABASE_URL` | Yes | SQLite file path, defaults to `file:./dev.db` |
 | `AUTH_SECRET` | Yes | Session signing secret for NextAuth. Generate with `openssl rand -base64 32` |
-| `AUTH_URL` | Production only | Your deployed URL (e.g. `https://your-app.vercel.app`), so NextAuth knows its own origin. Not needed for local dev |
 | `ANTHROPIC_API_KEY` | No | If set, AI copy (match explanations, follow-up messages, plan summaries) is generated live via Claude. If unset, a deterministic mock provider produces the same copy from templates — the app is fully functional either way |
 
 ### Database
 
-- **Engine:** Postgres via Prisma. Any provider works — Neon and Vercel Postgres (itself Neon-backed) are the easiest to pair with a Vercel deployment; Supabase works equally well.
+- **Engine:** SQLite via Prisma (zero-dependency local setup — no external database or account needed to run this app on your own machine).
 - **Prisma version:** pinned to `6.19.3`. Prisma 7 (the `latest` npm tag) requires driver adapters and a new `prisma.config.ts` workflow — too much moving-parts risk for an MVP, so we stayed on the well-documented 6.x line.
 - Schema: `prisma/schema.prisma`. Seed script: `prisma/seed.ts` (deterministic — re-running it wipes and regenerates all demo data the same way every time).
 
-### Deploying to Vercel
+### Deploying live (optional)
 
-1. Import the GitHub repo at [vercel.com/new](https://vercel.com/new) — Next.js is auto-detected, no config needed.
-2. Add a Postgres database from the project's **Storage** tab (this provisions Neon under the hood and can auto-populate `DATABASE_URL`), or paste in a `DATABASE_URL` from Neon/Supabase directly.
-3. Set `AUTH_SECRET` (and `AUTH_URL` to your `*.vercel.app` domain) as environment variables in the project's **Settings → Environment Variables**.
-4. Run `npx prisma migrate deploy` and `npm run db:seed` once against that same `DATABASE_URL` (locally, pointed at the production database) to create the schema and demo data.
-5. Deploy — every push to `main` redeploys automatically from then on.
+SQLite's local-file approach doesn't survive serverless hosting (Vercel, etc.) — every write would fail once deployed, since there's no persistent disk. Deploying live is possible but requires switching `prisma/schema.prisma`'s datasource to `postgresql` and pointing `DATABASE_URL` at a hosted Postgres instance (Neon and Vercel Postgres are the easiest pairings). This is a deliberate, separate step from local development, not something to do by default — ask if you want to go down that path again.
 
 ### Demo credentials
 
@@ -95,7 +90,7 @@ See `prisma/schema.prisma`. Core entities: `User`, `Wedding`, `WeddingMember`, `
 
 ## 4. Tech stack
 
-Next.js 16 (App Router) · React 19 · TypeScript (strict) · Tailwind CSS v4 · shadcn/ui on **Base UI** primitives (this shadcn registry uses `@base-ui/react`, not Radix — composition uses a `render={<Element/>}` prop rather than `asChild`) · Prisma 6 + Postgres · NextAuth v5 (credentials/JWT) · Zod · Anthropic SDK (optional).
+Next.js 16 (App Router) · React 19 · TypeScript (strict) · Tailwind CSS v4 · shadcn/ui on **Base UI** primitives (this shadcn registry uses `@base-ui/react`, not Radix — composition uses a `render={<Element/>}` prop rather than `asChild`) · Prisma 6 + SQLite · NextAuth v5 (credentials/JWT) · Zod · Anthropic SDK (optional).
 
 ## 5. AI provider
 
@@ -127,4 +122,4 @@ One small piece of that proposal is already shipped: **Engagement** is now a sel
 3. Real payment gateway (Razorpay/Stripe) behind the existing `Payment` milestone model.
 4. Vendor-side portal so vendors can respond to quotation requests directly instead of the couple manually advancing booking status.
 5. Multi-wedding support for planners/family members managing more than one wedding.
-6. A scheduled cleanup/reset job for the public demo database, since anyone with the URL can create accounts and write data.
+6. Move from SQLite to Postgres for a live/multi-instance deployment (schema is portable — only the Prisma `datasource` provider and connection string change; see **Deploying live** above).
